@@ -12,33 +12,63 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // soft_cpp
-arma::mat soft_cpp(const arma::mat& X, const arma::mat& u, int q, int n);
-RcppExport SEXP _blox_soft_cpp(SEXP XSEXP, SEXP uSEXP, SEXP qSEXP, SEXP nSEXP) {
+arma::mat soft_cpp(const arma::mat& X, const arma::mat& u, int q, int m);
+RcppExport SEXP _blox_soft_cpp(SEXP XSEXP, SEXP uSEXP, SEXP qSEXP, SEXP mSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type u(uSEXP);
     Rcpp::traits::input_parameter< int >::type q(qSEXP);
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
-    rcpp_result_gen = Rcpp::wrap(soft_cpp(X, u, q, n));
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
+    rcpp_result_gen = Rcpp::wrap(soft_cpp(X, u, q, m));
     return rcpp_result_gen;
 END_RCPP
 }
 // calc_sparse_v_cpp
-arma::mat calc_sparse_v_cpp(const arma::mat& X, arma::mat v, double q, int n, int maxit, double tol, bool robust);
-RcppExport SEXP _blox_calc_sparse_v_cpp(SEXP XSEXP, SEXP vSEXP, SEXP qSEXP, SEXP nSEXP, SEXP maxitSEXP, SEXP tolSEXP, SEXP robustSEXP) {
+arma::mat calc_sparse_v_cpp(const arma::mat& X, arma::mat v, int q, int m, int maxit, double tol, bool robust);
+RcppExport SEXP _blox_calc_sparse_v_cpp(SEXP XSEXP, SEXP vSEXP, SEXP qSEXP, SEXP mSEXP, SEXP maxitSEXP, SEXP tolSEXP, SEXP robustSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< arma::mat >::type v(vSEXP);
-    Rcpp::traits::input_parameter< double >::type q(qSEXP);
-    Rcpp::traits::input_parameter< int >::type n(nSEXP);
+    Rcpp::traits::input_parameter< int >::type q(qSEXP);
+    Rcpp::traits::input_parameter< int >::type m(mSEXP);
     Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< bool >::type robust(robustSEXP);
-    rcpp_result_gen = Rcpp::wrap(calc_sparse_v_cpp(X, v, q, n, maxit, tol, robust));
+    rcpp_result_gen = Rcpp::wrap(calc_sparse_v_cpp(X, v, q, m, maxit, tol, robust));
+    return rcpp_result_gen;
+END_RCPP
+}
+// hcsvd_ht_cpp
+Rcpp::List hcsvd_ht_cpp(const arma::mat& S, const arma::mat& S_h, arma::mat V, int q, std::string linkage, int maxit, double tol);
+RcppExport SEXP _blox_hcsvd_ht_cpp(SEXP SSEXP, SEXP S_hSEXP, SEXP VSEXP, SEXP qSEXP, SEXP linkageSEXP, SEXP maxitSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type S_h(S_hSEXP);
+    Rcpp::traits::input_parameter< arma::mat >::type V(VSEXP);
+    Rcpp::traits::input_parameter< int >::type q(qSEXP);
+    Rcpp::traits::input_parameter< std::string >::type linkage(linkageSEXP);
+    Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(hcsvd_ht_cpp(S, S_h, V, q, linkage, maxit, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
+// exhaustive_bd_cpp
+Rcpp::List exhaustive_bd_cpp(const arma::mat& S, std::string linkage, int min_block_size);
+RcppExport SEXP _blox_exhaustive_bd_cpp(SEXP SSEXP, SEXP linkageSEXP, SEXP min_block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type S(SSEXP);
+    Rcpp::traits::input_parameter< std::string >::type linkage(linkageSEXP);
+    Rcpp::traits::input_parameter< int >::type min_block_size(min_block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(exhaustive_bd_cpp(S, linkage, min_block_size));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -46,6 +76,8 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_blox_soft_cpp", (DL_FUNC) &_blox_soft_cpp, 4},
     {"_blox_calc_sparse_v_cpp", (DL_FUNC) &_blox_calc_sparse_v_cpp, 7},
+    {"_blox_hcsvd_ht_cpp", (DL_FUNC) &_blox_hcsvd_ht_cpp, 7},
+    {"_blox_exhaustive_bd_cpp", (DL_FUNC) &_blox_exhaustive_bd_cpp, 3},
     {NULL, NULL, 0}
 };
 

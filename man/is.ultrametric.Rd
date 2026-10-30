@@ -32,7 +32,7 @@ is.ultrametric(hcsvd.obj)
 
 }
 \references{
-\cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+\cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 }
 \seealso{
 \code{\link{hcsvd}}

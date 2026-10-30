@@ -1,24 +1,16 @@
 Package: blox
 Type: Package
 Title: Block Diagonal Matrix Approximation
-Version: 0.0.1
+Version: 0.0.2
 Authors@R: 
     person(given = "Jan O.", family = "Bauer", email = "j.bauer@vu.nl", role = c("aut", "cre"), comment = c(ORCID = "0000-0001-7123-4507"))
 Maintainer: Jan O. Bauer <j.bauer@vu.nl>
-Description: Finds the best block diagonal matrix approximation of a symmetric matrix. This can be exploited for divisive hierarchical clustering using singular vectors, named HC-SVD. The method is described in Bauer (202Xa) <doi:10.48550/arXiv.2308.06820>.
+Description: Finds the best block diagonal matrix approximation of a symmetric matrix. This can be exploited for divisive hierarchical clustering using singular vectors, named HC-SVD. The method is described in Bauer (202X) <doi:10.48550/arXiv.2308.06820>.
 License: GPL (>= 2)
-Imports:
-    matrixStats,
-    Rcpp,
-    RcppArmadillo
+Imports: matrixStats, Rcpp, RcppArmadillo
 Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
-Suggests:
-    corrplot,
-    knitr,
-    psych,
-    testthat (>= 3.0.0)
-LinkingTo: 
-    Rcpp,
-    RcppArmadillo
+Suggests: bdsvd, corrplot, irlba, knitr, psych, testthat (>= 3.0.0)
+LinkingTo: Rcpp, RcppArmadillo
+NeedsCompilation: yes
+

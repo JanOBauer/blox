@@ -4,50 +4,69 @@
 \alias{bd.approx}
 \title{Two Block Diagonal Matrix Approximation.}
 \usage{
-bd.approx(S, linkage = "average", q = 1, h.power = 2, balance, max.iter)
+bd.approx(
+  S,
+  linkage = "average",
+  q = 1,
+  h.power = 2,
+  balance,
+  max.iter,
+  search = "hcsvd",
+  exhaustive.max.p = 20
+)
 }
 \arguments{
 \item{S}{A scaled \eqn{p}x\eqn{p} similarity matrix. For example, this may be a correlation matrix.}
 
 \item{linkage}{The linkage function to be used. This should be one of \code{"average"}, \code{"ncut"}, \code{"rcut"}, \code{"RV"} (for RV-coefficient), or \code{"single"}.}
 
-\item{q}{Number of sparse eigenvectors to be used. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"} for as many sparse eigenvectors as
-there are eigenvalues larger or equal to one. For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors.
-E.g., \code{q = 1} (100\%) uses all sparse eigenvectors and \code{q = 0.5} (50\%) will use half of all sparse eigenvectors. For \code{q = 1}, identification is best (see Bauer (202Xa) for details).}
+\item{q}{Number of sparse eigenvectors to be used whenever the HC-SVD search is applied. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"}.
+For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors, capped at \eqn{p-1}. E.g., \code{q = 1} uses all \eqn{p-1} available sparse eigenvectors.
+The Kaiser rule uses the number of eigenvalues of the Hadamard-transformed similarity matrix that are at least one, plus two additional eigenvectors, capped at \eqn{p-1}.}
 
-\item{h.power}{\code{h}-th Hadamard power of \code{S}. This should be a positive integer and increases robustness of the method, as described in Bauer (202Xa).}
+\item{h.power}{\code{h}-th Hadamard power of \code{S} used whenever sparse-eigenvector candidate generation is applied. This should be a positive integer. Larger powers shrink similarities with magnitude smaller than one towards zero and can increase the contrast between within- and between-block similarities, although their effect depends on the similarity structure and clustering objective.}
 
 \item{balance}{Minimum proportion of the smaller block when splitting into two. Must be a numeric value in \eqn{(0, 0.5]}. For example, \code{balance = 0.5} enforces an exact 50:50 split,
 while \code{balance = 0.2} allows splits as unbalanced as 20:80, with more balanced splits such as 30:70 or 40:60 also permitted. If an exact split is not possible (e.g., \code{balance = 0.5} when
 \eqn{p = 9}), the closest integer partition is used (e.g., 4 and 5 per block).}
 
-\item{max.iter}{How many iterations should be performed for computing the sparse eigenvectors.
+\item{max.iter}{How many iterations should be performed for computing the sparse eigenvectors when the HC-SVD search is used.
 Default is \code{500}.}
+
+\item{search}{Search strategy. \code{"hcsvd"} uses sparse-eigenvector candidate generation, \code{"exhaustive"} evaluates all unique two-way partitions for the selected linkage function only, and \code{"auto"} uses exhaustive search when \eqn{p} is at most \code{exhaustive.max.p} and HC-SVD otherwise.}
+
+\item{exhaustive.max.p}{Largest problem size for which exhaustive search is used when \code{search = "auto"}. Default is \code{20}. The exhaustive C++ implementation is restricted to at most 30 objects.}
 }
 \value{
-A list with four components:
+A list containing:
 \item{B}{
-The best two block diagonal matrix approximation.
+ The best two block diagonal matrix approximation.
 }
 \item{BD}{
-The best two block diagonal matrix approximation permuted to a block diagonal shape: \eqn{BD = P B t(P)}.
+ The best two block diagonal matrix approximation permuted to a block diagonal shape: \eqn{BD = P B t(P)}.
 }
 \item{P}{
-The permutation matrix \eqn{P}: \eqn{BD = P B t(P)}.
+ The permutation matrix \eqn{P}: \eqn{BD = P B t(P)}.
 }
 \item{clustering}{
-The clustering vector as an integer vector of length \eqn{p}, which gives for each component the number \code{1} or \code{2} of the cluster/split to which it belongs.
+ The clustering vector as an integer vector of length \eqn{p}, which gives for each component the number \code{1} or \code{2} of the cluster/split to which it belongs.
 }
 \item{split}{
-A \code{list} containing the two splits.
+ A \code{list} containing the two splits.
 }
 \item{distance}{
-The approximation error (distance) according to the selected linkage function.
+ The approximation error (distance) according to the selected linkage function.
+}
+\item{search}{
+ The search strategy used for the split.
+}
+\item{n.candidates}{
+ The number of candidate evaluations performed.
 }
 }
 \description{
-Finds the best two block diagonal matrix approximation of a similarity matrix according to some distance (linkage) function as described in Bauer (202Xa).
-Candidate splits are determined by the first sparse eigenvectors (sparse approximations of the first eigenvectors, i.e., vectors with many zero entries) of the similarity matrix.
+Finds the best two block diagonal matrix approximation of a similarity matrix according to some distance (linkage) function as described in Bauer (202X).
+By default, candidate splits are determined by sparse approximations of the first eigenvectors of the similarity matrix. Alternatively, all unique two-way partitions can be evaluated by exhaustive search.
 }
 \details{
 The sparse eigenvectors are computed using the method of Shen and Huang (2008). The method is implemented by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} (\code{irlba}).
@@ -113,7 +132,7 @@ bd.approx(S, linkage = "rcut", balance = 0.5)
 
 }
 \references{
-\cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+\cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 
 \cite{Shen, H. and Huang, J.Z. (2008). Sparse principal component analysis via regularized low rank matrix approximation, J. Multivar. Anal. 99, 1015–1034.}
 }

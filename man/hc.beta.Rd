@@ -26,28 +26,28 @@ Default is \code{TRUE}.}
 \value{
 A list with \code{n.splits} components. Each split is a list of four components:
 \item{split}{
-The split number.
+ The split number.
 }
 \item{beta}{
-Revelle's beta for this split.
+ Revelle's beta for this split.
 }
 \item{A}{
-One of the two sub-scales that has been split.
+ One of the two sub-scales that has been split.
 }
 \item{B}{
-One of the two sub-scales that has been split.
+ One of the two sub-scales that has been split.
 }
 \item{beta.alpha}{
-Computes the ratio of Revelle's beta and Cronbach's alpha.
+ Computes the ratio of Revelle's beta and Cronbach's alpha.
 }
 }
 \description{
-Performs HC-SVD to reveal the hierarchical variable structure using average linkage as described in Bauer (202Xa). For a data matrix comprising \eqn{p} items,
+Performs HC-SVD to reveal the hierarchical variable structure using average linkage as described in Bauer (202X). For a data matrix comprising \eqn{p} items,
 this means that \eqn{p-1} splits are identified. The obtained structure aligns with the structure according to the worst split-half reliability and is thus used to compute
-a hierarchy of all Revelle's beta as described in Bauer (202Xb).
+a hierarchy of all Revelle's beta as described in Bauer (2026).
 }
 \details{
-Supplementary details are in Bauer (202Xb).
+Supplementary details are in Bauer (2026).
 }
 \examples{
 #We compute the worst split-half reliabilities on a correlation matrix.
@@ -114,9 +114,9 @@ hc.beta(R = R, splits = bd.approx(R))
 
 }
 \references{
-\cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+\cite{Bauer, J.O. (2026). Revelle’s beta: The wait is over—computation becomes possible. Psychometrika.}
 
-\cite{Bauer, J.O. (202Xb). Revelle's beta: The wait is over - we can compute it! Working paper.}
+\cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 }
 \seealso{
 \code{\link{bd.approx}} \code{\link{hcsvd}}

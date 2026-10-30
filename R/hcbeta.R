@@ -72,9 +72,9 @@ is.corr.matrix <- function(R) {
 
 #' @title Compute Revelle's Beta for all worst split-halves using HC-SVD.
 #'
-#' @description Performs HC-SVD to reveal the hierarchical variable structure using average linkage as described in Bauer (202Xa). For a data matrix comprising \eqn{p} items,
+#' @description Performs HC-SVD to reveal the hierarchical variable structure using average linkage as described in Bauer (202X). For a data matrix comprising \eqn{p} items,
 #' this means that \eqn{p-1} splits are identified. The obtained structure aligns with the structure according to the worst split-half reliability and is thus used to compute
-#' a hierarchy of all Revelle's beta as described in Bauer (202Xb).
+#' a hierarchy of all Revelle's beta as described in Bauer (2026).
 #'
 #' @param R A correlation matrix of dimension \eqn{p}x\eqn{p} or a data matrix of dimension \eqn{n}x\eqn{p} can be provided. If a data matrix is supplied, it must be indicated by setting
 #' \code{is.corr = FALSE}, and the correlation matrix will then be calculated as \code{cor(X)}.
@@ -93,7 +93,7 @@ is.corr.matrix <- function(R) {
 #' Default is \code{TRUE}.
 #'
 #' @details
-#' Supplementary details are in Bauer (202Xb).
+#' Supplementary details are in Bauer (2026).
 #'
 #' @return
 #' A list with \code{n.splits} components. Each split is a list of four components:
@@ -115,8 +115,8 @@ is.corr.matrix <- function(R) {
 #'
 #' @seealso \code{\link{bd.approx}} \code{\link{hcsvd}}
 #'
-#' @references \cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
-#' @references \cite{Bauer, J.O. (202Xb). Revelle's beta: The wait is over - we can compute it! Working paper.}
+#' @references \cite{Bauer, J.O. (2026). Revelle’s beta: The wait is over—computation becomes possible. Psychometrika.}
+#' @references \cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 #'
 #' @examples
 #' #We compute the worst split-half reliabilities on a correlation matrix.
@@ -163,7 +163,7 @@ is.corr.matrix <- function(R) {
 #'
 #' #Visualize the ratio of Revelle's beta and Cronbach's alpha
 #' beta.alpha <- sapply(betas, `[[`, "beta.alpha")
-#' plot(splits, beta.alpha,
+#' plot(splits, beta.values,
 #'   type = "b",
 #'   xlab = "Split",
 #'   ylab = "Beta/Alpha",

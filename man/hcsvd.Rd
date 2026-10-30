@@ -4,7 +4,16 @@
 \alias{hcsvd}
 \title{Hierarchical Clustering Using Singular Vectors (HC-SVD).}
 \usage{
-hcsvd(S, linkage = "average", q = 1, h.power = 2, max.iter, verbose = TRUE)
+hcsvd(
+  S,
+  linkage = "average",
+  q = 1,
+  h.power = 2,
+  max.iter,
+  verbose = TRUE,
+  search = "hcsvd",
+  exhaustive.max.p = 20
+)
 }
 \arguments{
 \item{S}{A scaled \eqn{p}x\eqn{p} similarity matrix. For example, this may be a correlation matrix.}
@@ -12,51 +21,58 @@ hcsvd(S, linkage = "average", q = 1, h.power = 2, max.iter, verbose = TRUE)
 \item{linkage}{The linkage function to be used. This should be one of \code{"average"}, \code{"single"}, or
 \code{"RV"} (for RV-coefficient). Note that the RV-coefficient might not yield an ultrametric distance.}
 
-\item{q}{Number of sparse eigenvectors to be used. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"} for as many sparse eigenvectors as
-there are eigenvalues larger or equal to one. For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors.
-E.g., \code{q = 1} (100\%) uses all sparse eigenvectors and \code{q = 0.5} (50\%) will use half of all sparse eigenvectors. For \code{q = 1}, identification is best (see Bauer (202Xa) for details).}
+\item{q}{Number of sparse eigenvectors to be used whenever the HC-SVD search is applied. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"}.
+For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors, capped at \eqn{p-1}. E.g., \code{q = 1} uses all \eqn{p-1} available sparse eigenvectors.
+The Kaiser rule uses the number of eigenvalues of the Hadamard-transformed similarity matrix that are at least one, plus two additional eigenvectors, capped at \eqn{p-1}.}
 
-\item{h.power}{\code{h}-th Hadamard power of \code{S}. This should be a positive integer and increases robustness of the method, as described in Bauer (202Xa).}
+\item{h.power}{\code{h}-th Hadamard power of \code{S} used whenever sparse-eigenvector candidate generation is applied. This should be a positive integer. Larger powers shrink similarities with magnitude smaller than one towards zero and can increase the contrast between within- and between-block similarities, although their effect depends on the similarity structure and clustering objective.}
 
-\item{max.iter}{How many iterations should be performed for computing the sparse eigenvectors.
+\item{max.iter}{How many iterations should be performed for computing the sparse eigenvectors when the HC-SVD search is used.
 Default is \code{500}.}
 
 \item{verbose}{Print out progress as \eqn{p-1} iterations for divisive hierarchical clustering are performed.
 Default is \code{TRUE}.}
+
+\item{search}{Search strategy. \code{"hcsvd"} uses sparse-eigenvector candidate generation, \code{"exhaustive"} evaluates all unique two-way partitions for the selected linkage function only, and \code{"auto"} uses exhaustive search whenever the current cluster contains at most \code{exhaustive.max.p} objects and HC-SVD otherwise.}
+
+\item{exhaustive.max.p}{Largest cluster size for which exhaustive search is used when \code{search = "auto"}. Default is \code{20}. The exhaustive C++ implementation is restricted to at most 30 objects.}
 }
 \value{
-A list with four components:
+A list containing:
 \item{hclust}{
-The clustering structure identified by HC-SVD as an object of type \code{hclust}.
+ The clustering structure identified by HC-SVD as an object of type \code{hclust}. For \code{linkage = "RV"}, dendrogram heights are
+ monotonically adjusted if required because the RV-coefficient need not yield an ultrametric distance.
 }
 \item{dist.matrix}{
-The ultrametric distance matrix (cophenetic matrix) of the HC-SVD structure as an object of class \code{dist}.
+ The distance matrix of the HC-SVD structure as an object of class \code{dist}. This matrix need not be ultrametric for \code{linkage = "RV"}.
 }
 \item{u.sim}{
-The ultrametric similarity matrix of \eqn{S} obtained by HC-SVD as an object of class \code{matrix}. The ultrametric similarity matrix
-is calculated as \code{1-dist.matrix}.
+ The corresponding similarity matrix of \eqn{S}, calculated as \code{1-dist.matrix}.
 }
 \item{q.p}{
-A vector of length \eqn{p-1} containing the ratio \eqn{q_i/p_i} of the \eqn{q_i} sparse eigenvectors used relative to all sparse
-eigenvectors \eqn{q_i} for the split of each cluster. The ratio is set to \code{NA} if the cluster contains only two variables as the search
-for sparse eigenvectors that reflect this obvious split is not required in this case.
+ A vector of length \eqn{p-1} containing the ratio \eqn{q_i/p_i} of the number of sparse eigenvectors used relative to the total number of eigenvectors for the split of each cluster.
+ Since HC-SVD uses at most \eqn{p_i-1} sparse eigenvectors, this ratio is always smaller than one. The ratio is set to \code{NA} when exhaustive search is used or when
+ the cluster contains only two objects, since no sparse eigenvectors are computed in these cases.
+}
+\item{search}{
+ A vector indicating whether \code{"hcsvd"}, \code{"exhaustive"}, or the unique two-object split was used at each recursive step.
 }
 }
 \description{
-Performs HC-SVD to reveal the hierarchical structure as described in Bauer (202Xa). This divisive approach iteratively splits each cluster into two subclusters.
-Candidate splits are determined by the first sparse eigenvectors (sparse approximations of the first eigenvectors, i.e., vectors with many zero entries) of the similarity matrix.
+Performs HC-SVD to reveal the hierarchical structure as described in Bauer (202X). This divisive approach iteratively splits each cluster into two subclusters.
+By default, candidate splits are determined by sparse approximations of the first eigenvectors of the similarity matrix. For small clusters, an exhaustive search over all unique two-way partitions can alternatively be used.
 The selected split is the one that yields the best block-diagonal approximation of the similarity matrix according to a specified linkage function. The procedure continues until each object is assigned to its own cluster.
 }
 \details{
 The sparse loadings are computed using the method proposed by Shen & Huang (2008). The corresponding implementation is written in \code{Rcpp}/\code{RcppArmadillo}
-for computational efficiency and is based on the \code{R} implementation by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} (\pkg{irlba}).
+for computational efficiency and is based on the \code{R} implementation by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} \{\pkg{irlba}\}.
 However, the implementation has been adapted to better align with the scope of the \pkg{bdsvd} package which is the base for the \pkg{blox} package.
 
-Supplementary details are in \code{\link[blox]{hc.beta}} and in Bauer (202Xb).
+Supplementary details are in \code{\link[blox]{hc.beta}} and in Bauer (2026).
 }
 \examples{
 #We give one example for variable clustering directly on a correlation matrix,
-#and we replicate the USArrest example in Bauer (202Xa) for observation clustering.
+#and we replicate the USArrest example in Bauer (202X) for observation clustering.
 #More elaborate code alongside a different example for variable clustering can be
 #found in the corresponding supplementary material of that manuscripts.
 
@@ -109,12 +125,12 @@ plot(hclust(hcsvd.obj$dist.matrix), main = "HC-SVD", sub = "", xlab = "")
 
 }
 \references{
-\cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+\cite{Bauer, J.O. (2026). Revelle’s beta: The wait is over—computation becomes possible. Psychometrika.}
 
-\cite{Bauer, J.O. (202Xb). Revelle's beta: The wait is over - we can compute it!. Working paper.}
+\cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 
 \cite{Shen, H. and Huang, J.Z. (2008). Sparse principal component analysis via regularized low rank matrix approximation, J. Multivar. Anal. 99, 1015–1034.}
 }
 \seealso{
-\code{\link[bdsvd]{bdsvd}} \{\link[bdsvd]{bdsvd}\}
+\code{\link[bdsvd]{bdsvd}} \{\pkg{bdsvd}\}
 }

@@ -45,12 +45,46 @@ calc.distance <- function(S, idx.cluster, feature.names, linkage) {
 
 
 
+exhaustive.split <- function(S,
+                             linkage,
+                             labels,
+                             min.block.size = 1L
+) {
+
+  exhaustive <- exhaustive_bd_cpp(
+    S = S,
+    linkage = linkage,
+    min_block_size = as.integer(min.block.size)
+  )
+
+  clustering <- as.integer(exhaustive$cluster)
+
+  cluster1 <- labels[clustering == 1]
+  cluster2 <- labels[clustering == 2]
+
+  cluster.distance <- exhaustive$objective
+  if (linkage %in% c("average", "RV", "single")) {
+    cluster.distance <- 1 - cluster.distance
+  }
+
+  return(list(
+    cluster1 = cluster1,
+    cluster2 = cluster2,
+    cluster.distance = cluster.distance,
+    n.candidates = exhaustive$n.candidates
+  ))
+}
+
+
+
 hcsvd.ht <- function(S,
                      S.h,
                      q,
                      linkage,
                      labels,
-                     max.iter
+                     max.iter,
+                     search,
+                     exhaustive.max.p
 ) {
 
   p <- ncol(S)
@@ -58,7 +92,33 @@ hcsvd.ht <- function(S,
     idx.cluster <- list(labels[1], labels[2])
     cluster.distance <- calc.distance(S, idx.cluster, labels, linkage)
 
-    return(list(cluster1 = idx.cluster[1], cluster2 = idx.cluster[2], cluster.distance = cluster.distance, q.p = NA))
+    return(list(cluster1 = idx.cluster[1], cluster2 = idx.cluster[2],
+                cluster.distance = cluster.distance, q.p = NA,
+                search = "unique", n.candidates = 1))
+  }
+
+
+  search.used <- search
+  if (search == "auto") {
+    if (p <= exhaustive.max.p) {
+      search.used <- "exhaustive"
+    } else {
+      search.used <- "hcsvd"
+    }
+  }
+
+
+  if (search.used == "exhaustive") {
+    exact <- exhaustive.split(
+      S = S,
+      linkage = linkage,
+      labels = labels,
+      min.block.size = 1L
+    )
+
+    return(list(cluster1 = exact$cluster1, cluster2 = exact$cluster2,
+                cluster.distance = exact$cluster.distance, q.p = NA,
+                search = "exhaustive", n.candidates = exact$n.candidates))
   }
 
 
@@ -68,40 +128,31 @@ hcsvd.ht <- function(S,
     if (q == 1){
       q <- p - 1
     } else {
-      q <- min(round(q * p), p - 1)
+      q <- max(1, min(round(q * p), p - 1))
     }
   }
   if (q == "Kaiser") {
     q <- min(sum(SVD$values >= 1) + 2, p - 1)
   }
 
-  SVD$vectors <- SVD$vectors[, 1:q]
+  SVD$vectors <- SVD$vectors[, 1:q, drop = FALSE]
 
-  dof.grid <- 1 : (p - 1)
-  distance <- -Inf
+  hcsvd.ht.cpp <- hcsvd_ht_cpp(
+    S = S,
+    S_h = S.h,
+    V = SVD$vectors,
+    q = q,
+    linkage = linkage,
+    maxit = max.iter
+  )
 
-  for (dof in dof.grid) {
-    V <- calc_sparse_v_cpp(X = S.h, v = SVD$vectors, q = q, n = dof, maxit = max.iter)
+  cluster1 <- labels[hcsvd.ht.cpp$cluster == 1]
+  cluster2 <- labels[hcsvd.ht.cpp$cluster == 2]
+  cluster.distance <- hcsvd.ht.cpp$distance
 
-    for (i in seq_len(q)) {
-      v <- V[, i]
-      idx.cluster <- list(labels[v != 0], labels[v == 0])
-      distance.ht <- calc.distance(S, idx.cluster, labels, linkage)
-
-
-      if (distance.ht > distance) {
-        distance <- distance.ht
-        cluster1 <- idx.cluster[[1]]
-        cluster2 <- idx.cluster[[2]]
-
-      }
-    }
-  }
-
-
-  cluster.distance <- distance
-
-  return(list(cluster1 = cluster1, cluster2 = cluster2, cluster.distance = cluster.distance, q.p = q / p))
+  return(list(cluster1 = cluster1, cluster2 = cluster2,
+              cluster.distance = cluster.distance, q.p = q / p,
+              search = "hcsvd", n.candidates = q * (p - 1)))
 }
 
 
@@ -112,11 +163,13 @@ is.sim.matrix <- function(S) {
     stop("The provided similarity matrix is not a matrix.")
   }
 
-  if (!all(diag(S) == 1)) {
+  tol <- sqrt(.Machine$double.eps)
+
+  if (any(abs(diag(S) - 1) > tol)) {
     stop("The provided similarity matrix does not have ones on the diagonal.")
   }
 
-  if (any(abs(S) > 1)) {
+  if (any(abs(S) > 1 + tol)) {
     stop("The provided similarity matrix is not scaled.")
   }
 
@@ -133,7 +186,7 @@ is.sim.matrix <- function(S) {
   }
 
   eigenvalues <- eigen(S, symmetric = TRUE, only.values = TRUE)$values
-  if(any(eigenvalues < 0)) {
+  if(any(eigenvalues < -tol)) {
     stop("The provided similarity matrix is not positive semi-definite.")
   }
 
@@ -144,8 +197,8 @@ is.sim.matrix <- function(S) {
 
 #' @title Hierarchical Clustering Using Singular Vectors (HC-SVD).
 #'
-#' @description Performs HC-SVD to reveal the hierarchical structure as described in Bauer (202Xa). This divisive approach iteratively splits each cluster into two subclusters.
-#' Candidate splits are determined by the first sparse eigenvectors (sparse approximations of the first eigenvectors, i.e., vectors with many zero entries) of the similarity matrix.
+#' @description Performs HC-SVD to reveal the hierarchical structure as described in Bauer (202X). This divisive approach iteratively splits each cluster into two subclusters.
+#' By default, candidate splits are determined by sparse approximations of the first eigenvectors of the similarity matrix. For small clusters, an exhaustive search over all unique two-way partitions can alternatively be used.
 #' The selected split is the one that yields the best block-diagonal approximation of the similarity matrix according to a specified linkage function. The procedure continues until each object is assigned to its own cluster.
 #'
 #' @param S A scaled \eqn{p}x\eqn{p} similarity matrix. For example, this may be a correlation matrix.
@@ -153,52 +206,59 @@ is.sim.matrix <- function(S) {
 #' @param linkage The linkage function to be used. This should be one of \code{"average"}, \code{"single"}, or
 #' \code{"RV"} (for RV-coefficient). Note that the RV-coefficient might not yield an ultrametric distance.
 #'
-#' @param q Number of sparse eigenvectors to be used. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"} for as many sparse eigenvectors as
-#' there are eigenvalues larger or equal to one. For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors.
-#' E.g., \code{q = 1} (100%) uses all sparse eigenvectors and \code{q = 0.5} (50%) will use half of all sparse eigenvectors. For \code{q = 1}, identification is best (see Bauer (202Xa) for details).
+#' @param q Number of sparse eigenvectors to be used whenever the HC-SVD search is applied. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"}.
+#' For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors, capped at \eqn{p-1}. E.g., \code{q = 1} uses all \eqn{p-1} available sparse eigenvectors.
+#' The Kaiser rule uses the number of eigenvalues of the Hadamard-transformed similarity matrix that are at least one, plus two additional eigenvectors, capped at \eqn{p-1}.
 #'
-#' @param h.power \code{h}-th Hadamard power of \code{S}. This should be a positive integer and increases robustness of the method, as described in Bauer (202Xa).
+#' @param h.power \code{h}-th Hadamard power of \code{S} used whenever sparse-eigenvector candidate generation is applied. This should be a positive integer. Larger powers shrink similarities with magnitude smaller than one towards zero and can increase the contrast between within- and between-block similarities, although their effect depends on the similarity structure and clustering objective.
 #'
-#' @param max.iter How many iterations should be performed for computing the sparse eigenvectors.
+#' @param max.iter How many iterations should be performed for computing the sparse eigenvectors when the HC-SVD search is used.
 #' Default is \code{500}.
 #'
 #' @param verbose Print out progress as \eqn{p-1} iterations for divisive hierarchical clustering are performed.
 #' Default is \code{TRUE}.
 #'
+#' @param search Search strategy. \code{"hcsvd"} uses sparse-eigenvector candidate generation, \code{"exhaustive"} evaluates all unique two-way partitions for the selected linkage function only, and \code{"auto"} uses exhaustive search whenever the current cluster contains at most \code{exhaustive.max.p} objects and HC-SVD otherwise.
+#'
+#' @param exhaustive.max.p Largest cluster size for which exhaustive search is used when \code{search = "auto"}. Default is \code{20}. The exhaustive C++ implementation is restricted to at most 30 objects.
+#'
 #' @details
 #' The sparse loadings are computed using the method proposed by Shen & Huang (2008). The corresponding implementation is written in \code{Rcpp}/\code{RcppArmadillo}
-#' for computational efficiency and is based on the \code{R} implementation by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} (\pkg{irlba}).
+#' for computational efficiency and is based on the \code{R} implementation by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} \{\pkg{irlba}\}.
 #' However, the implementation has been adapted to better align with the scope of the \pkg{bdsvd} package which is the base for the \pkg{blox} package.
 #'
-#' Supplementary details are in \code{\link[blox]{hc.beta}} and in Bauer (202Xb).
+#' Supplementary details are in \code{\link[blox]{hc.beta}} and in Bauer (2026).
 #'
 #' @return
-#' A list with four components:
+#' A list containing:
 #' \item{hclust}{
-#'  The clustering structure identified by HC-SVD as an object of type \code{hclust}.
+#'  The clustering structure identified by HC-SVD as an object of type \code{hclust}. For \code{linkage = "RV"}, dendrogram heights are
+#'  monotonically adjusted if required because the RV-coefficient need not yield an ultrametric distance.
 #' }
 #' \item{dist.matrix}{
-#'  The ultrametric distance matrix (cophenetic matrix) of the HC-SVD structure as an object of class \code{dist}.
+#'  The distance matrix of the HC-SVD structure as an object of class \code{dist}. This matrix need not be ultrametric for \code{linkage = "RV"}.
 #' }
 #' \item{u.sim}{
-#'  The ultrametric similarity matrix of \eqn{S} obtained by HC-SVD as an object of class \code{matrix}. The ultrametric similarity matrix
-#'  is calculated as \code{1-dist.matrix}.
+#'  The corresponding similarity matrix of \eqn{S}, calculated as \code{1-dist.matrix}.
 #' }
 #' \item{q.p}{
-#'  A vector of length \eqn{p-1} containing the ratio \eqn{q_i/p_i} of the \eqn{q_i} sparse eigenvectors used relative to all sparse
-#'  eigenvectors \eqn{q_i} for the split of each cluster. The ratio is set to \code{NA} if the cluster contains only two variables as the search
-#'  for sparse eigenvectors that reflect this obvious split is not required in this case.
+#'  A vector of length \eqn{p-1} containing the ratio \eqn{q_i/p_i} of the number of sparse eigenvectors used relative to the total number of eigenvectors for the split of each cluster.
+#'  Since HC-SVD uses at most \eqn{p_i-1} sparse eigenvectors, this ratio is always smaller than one. The ratio is set to \code{NA} when exhaustive search is used or when
+#'  the cluster contains only two objects, since no sparse eigenvectors are computed in these cases.
+#' }
+#' \item{search}{
+#'  A vector indicating whether \code{"hcsvd"}, \code{"exhaustive"}, or the unique two-object split was used at each recursive step.
 #' }
 #'
-#' @seealso \code{\link[bdsvd]{bdsvd}} \{\link[bdsvd]{bdsvd}\}
+#' @seealso \code{\link[bdsvd]{bdsvd}} \{\pkg{bdsvd}\}
 #'
-#' @references \cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
-#' @references \cite{Bauer, J.O. (202Xb). Revelle's beta: The wait is over - we can compute it!. Working paper.}
+#' @references \cite{Bauer, J.O. (2026). Revelle’s beta: The wait is over—computation becomes possible. Psychometrika.}
+#' @references \cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 #' @references \cite{Shen, H. and Huang, J.Z. (2008). Sparse principal component analysis via regularized low rank matrix approximation, J. Multivar. Anal. 99, 1015–1034.}
 #'
 #' @examples
 #' #We give one example for variable clustering directly on a correlation matrix,
-#' #and we replicate the USArrest example in Bauer (202Xa) for observation clustering.
+#' #and we replicate the USArrest example in Bauer (202X) for observation clustering.
 #' #More elaborate code alongside a different example for variable clustering can be
 #' #found in the corresponding supplementary material of that manuscripts.
 #'
@@ -258,7 +318,9 @@ hcsvd <- function(S,
                   q = 1,
                   h.power = 2,
                   max.iter,
-                  verbose = TRUE
+                  verbose = TRUE,
+                  search = "hcsvd",
+                  exhaustive.max.p = 20
 ) {
 
   if (missing(S)) {
@@ -269,18 +331,39 @@ hcsvd <- function(S,
     stop("S must be a similarity matrix.")
   }
 
-  if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
-    stop(sprintf("%s is an invalid argument for q.", q))
+
+  if (!is.numeric(exhaustive.max.p) || length(exhaustive.max.p) != 1L ||
+      !is.finite(exhaustive.max.p) || exhaustive.max.p < 2 ||
+      exhaustive.max.p > 30 || exhaustive.max.p != floor(exhaustive.max.p)) {
+    stop("exhaustive.max.p must be an integer between 2 and 30.")
   }
 
-  if(h.power <= 0){
-    stop("h.power must be positive.")
-  }
-  S.h <- S^h.power
+  p <- ncol(S)
 
-  if(!(is.numeric(h.power) && h.power == floor(h.power))){
-    warning("h.power should be an integer.")
+
+  SEARCH <- c("hcsvd", "exhaustive", "auto")
+  if (!(search %in% SEARCH)) {
+    stop(sprintf("%s is an invalid search parameter", search))
   }
+
+  uses.hcsvd <- (search == "hcsvd" || (search == "auto" && p > exhaustive.max.p))
+  if (uses.hcsvd) {
+    if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
+      stop(sprintf("%s is an invalid argument for q.", q))
+    }
+
+    if (length(h.power) != 1L || !is.numeric(h.power) || is.na(h.power) || !is.finite(h.power) ||
+        h.power < 1 || h.power != floor(h.power)) {
+      stop("h.power should be a positive integer.")
+    }
+  }
+
+  if (uses.hcsvd) {
+    S.h <- S^h.power
+  } else {
+    S.h <- S
+  }
+
 
   LINKAGE <- c("average", "RV", "single")
   if (!(linkage %in% LINKAGE)) {
@@ -291,7 +374,10 @@ hcsvd <- function(S,
     max.iter <- 500
   }
 
-  p <- ncol(S)
+  if (search == "exhaustive" && p > 30) {
+    stop("Exhaustive search is available only for p <= 30.")
+  }
+
   if (length(colnames(S)) == 0 || length(rownames(S)) == 0) {
     colnames(S) <- rownames(S) <- seq_len(p)
   }
@@ -301,6 +387,7 @@ hcsvd <- function(S,
   }
 
   q.p <- c()
+  search.p <- c()
 
   labels <- colnames(S)
   dist.matrix <- matrix(0, p, p, dimnames = list(labels, labels))
@@ -318,9 +405,12 @@ hcsvd <- function(S,
                          q = q,
                          linkage = linkage,
                          labels = labels[current.labels],
-                         max.iter = max.iter)
+                         max.iter = max.iter,
+                         search = search,
+                         exhaustive.max.p = exhaustive.max.p)
 
     q.p <- c(q.p, hcsvd.ht$q.p)
+    search.p <- c(search.p, hcsvd.ht$search)
 
     cluster.rows <- labels %in% hcsvd.ht$cluster1
     cluster.cols <- labels %in% hcsvd.ht$cluster2
@@ -350,9 +440,21 @@ hcsvd <- function(S,
     }
   }
 
-  ordered.height <- order(height)
+  if (linkage == "RV") {
+    # RV distances need not be ultrametric. Adjust only the dendrogram heights
+    # when a parent would otherwise lie below one of its children.
+    for (i in seq_len(p - 1)) {
+      previous.clusters <- merge[i, merge[i, ] > 0]
 
-  merge <- merge[ordered.height, ]
+      if (length(previous.clusters) > 0) {
+        height[i] <- max(height[i], height[previous.clusters])
+      }
+    }
+  }
+
+  ordered.height <- order(height, seq_along(height))
+
+  merge <- merge[ordered.height, , drop = FALSE]
   height <- height[ordered.height]
 
   not.changed <- matrix(TRUE, p - 1, 2)
@@ -374,7 +476,8 @@ hcsvd <- function(S,
     message("\n")
   }
 
-  result <- list(hclust = hclust, dist.matrix = dist.matrix, u.sim = u.sim, q.p = q.p, linkage = linkage)
+  result <- list(hclust = hclust, dist.matrix = dist.matrix, u.sim = u.sim,
+                 q.p = q.p, linkage = linkage, search = search.p)
   class(result) <- "hcsvd"
   return(result)
 }
@@ -383,32 +486,36 @@ hcsvd <- function(S,
 
 #' @title Two Block Diagonal Matrix Approximation.
 #'
-#' @description Finds the best two block diagonal matrix approximation of a similarity matrix according to some distance (linkage) function as described in Bauer (202Xa).
-#' Candidate splits are determined by the first sparse eigenvectors (sparse approximations of the first eigenvectors, i.e., vectors with many zero entries) of the similarity matrix.
+#' @description Finds the best two block diagonal matrix approximation of a similarity matrix according to some distance (linkage) function as described in Bauer (202X).
+#' By default, candidate splits are determined by sparse approximations of the first eigenvectors of the similarity matrix. Alternatively, all unique two-way partitions can be evaluated by exhaustive search.
 #'
 #' @param S A scaled \eqn{p}x\eqn{p} similarity matrix. For example, this may be a correlation matrix.
 #'
 #' @param linkage The linkage function to be used. This should be one of \code{"average"}, \code{"ncut"}, \code{"rcut"}, \code{"RV"} (for RV-coefficient), or \code{"single"}.
 #'
-#' @param q Number of sparse eigenvectors to be used. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"} for as many sparse eigenvectors as
-#' there are eigenvalues larger or equal to one. For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors.
-#' E.g., \code{q = 1} (100%) uses all sparse eigenvectors and \code{q = 0.5} (50%) will use half of all sparse eigenvectors. For \code{q = 1}, identification is best (see Bauer (202Xa) for details).
+#' @param q Number of sparse eigenvectors to be used whenever the HC-SVD search is applied. This should be either a numeric value between zero and one to indicate percentages, or \code{"Kaiser"}.
+#' For a numerical value between zero and one, the number of sparse eigenvectors is determined as the corresponding share of the total number of eigenvectors, capped at \eqn{p-1}. E.g., \code{q = 1} uses all \eqn{p-1} available sparse eigenvectors.
+#' The Kaiser rule uses the number of eigenvalues of the Hadamard-transformed similarity matrix that are at least one, plus two additional eigenvectors, capped at \eqn{p-1}.
 #'
-#' @param h.power \code{h}-th Hadamard power of \code{S}. This should be a positive integer and increases robustness of the method, as described in Bauer (202Xa).
+#' @param h.power \code{h}-th Hadamard power of \code{S} used whenever sparse-eigenvector candidate generation is applied. This should be a positive integer. Larger powers shrink similarities with magnitude smaller than one towards zero and can increase the contrast between within- and between-block similarities, although their effect depends on the similarity structure and clustering objective.
 #'
 #' @param balance Minimum proportion of the smaller block when splitting into two. Must be a numeric value in \eqn{(0, 0.5]}. For example, \code{balance = 0.5} enforces an exact 50:50 split,
 #' while \code{balance = 0.2} allows splits as unbalanced as 20:80, with more balanced splits such as 30:70 or 40:60 also permitted. If an exact split is not possible (e.g., \code{balance = 0.5} when
 #' \eqn{p = 9}), the closest integer partition is used (e.g., 4 and 5 per block).
 #'
-#' @param max.iter How many iterations should be performed for computing the sparse eigenvectors.
+#' @param max.iter How many iterations should be performed for computing the sparse eigenvectors when the HC-SVD search is used.
 #' Default is \code{500}.
+#'
+#' @param search Search strategy. \code{"hcsvd"} uses sparse-eigenvector candidate generation, \code{"exhaustive"} evaluates all unique two-way partitions for the selected linkage function only, and \code{"auto"} uses exhaustive search when \eqn{p} is at most \code{exhaustive.max.p} and HC-SVD otherwise.
+#'
+#' @param exhaustive.max.p Largest problem size for which exhaustive search is used when \code{search = "auto"}. Default is \code{20}. The exhaustive C++ implementation is restricted to at most 30 objects.
 #'
 #' @details
 #' The sparse eigenvectors are computed using the method of Shen and Huang (2008). The method is implemented by Baglama, Reichel, and Lewis in \code{\link[irlba]{ssvd}} (\code{irlba}).
 #' Here, we use a \code{Rcpp}/\code{RcppArmadillo} implementation based on \code{\link[irlba]{ssvd}} with slight modifications to suit our method and for faster performance.
 #'
 #' @return
-#' A list with four components:
+#' A list containing:
 #' \item{B}{
 #'  The best two block diagonal matrix approximation.
 #' }
@@ -427,8 +534,14 @@ hcsvd <- function(S,
 #' \item{distance}{
 #'  The approximation error (distance) according to the selected linkage function.
 #' }
+#' \item{search}{
+#'  The search strategy used for the split.
+#' }
+#' \item{n.candidates}{
+#'  The number of candidate evaluations performed.
+#' }
 #'
-#' @references \cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+#' @references \cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 #' @references \cite{Shen, H. and Huang, J.Z. (2008). Sparse principal component analysis via regularized low rank matrix approximation, J. Multivar. Anal. 99, 1015–1034.}
 #'
 #' @examples
@@ -494,29 +607,61 @@ hcsvd <- function(S,
 #'
 #' @export
 bd.approx <- function(S,
-                  linkage = "average",
-                  q = 1,
-                  h.power = 2,
-                  balance,
-                  max.iter
+                      linkage = "average",
+                      q = 1,
+                      h.power = 2,
+                      balance,
+                      max.iter,
+                      search = "hcsvd",
+                      exhaustive.max.p = 20
 ) {
 
   if (!is.sim.matrix(S)) {
     stop("S must be a similarity matrix.")
   }
 
-  if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
-    stop(sprintf("%s is an invalid argument for q.", q))
+  SEARCH <- c("hcsvd", "exhaustive", "auto")
+  if (!(search %in% SEARCH)) {
+    stop(sprintf("%s is an invalid search parameter", search))
   }
 
-  if(h.power <= 0){
-    stop("h.power must be positive.")
+  if (!is.numeric(exhaustive.max.p) || length(exhaustive.max.p) != 1L ||
+      !is.finite(exhaustive.max.p) || exhaustive.max.p < 2 ||
+      exhaustive.max.p > 30 || exhaustive.max.p != floor(exhaustive.max.p)) {
+    stop("exhaustive.max.p must be an integer between 2 and 30.")
   }
-  S.h <- S^h.power
 
-  if(!(is.numeric(h.power) && h.power == floor(h.power))){
-    warning("h.power should be an integer.")
+  p <- ncol(S)
+  search.used <- search
+  if (search == "auto") {
+    if (p <= exhaustive.max.p) {
+      search.used <- "exhaustive"
+    } else {
+      search.used <- "hcsvd"
+    }
   }
+
+  if (search.used == "exhaustive" && p > 30) {
+    stop("Exhaustive search is available only for p <= 30.")
+  }
+
+  if (search.used == "hcsvd") {
+    if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
+      stop(sprintf("%s is an invalid argument for q.", q))
+    }
+
+    if (length(h.power) != 1L || !is.numeric(h.power) || is.na(h.power) || !is.finite(h.power) ||
+        h.power < 1 || h.power != floor(h.power)) {
+      stop("h.power should be a positive integer.")
+    }
+  }
+
+  if (search.used == "hcsvd") {
+    S.h <- S^h.power
+  } else {
+    S.h <- S
+  }
+
 
   LINKAGE <- c("average", "ncut", "rcut", "RV", "single")
   if (!(linkage %in% LINKAGE)) {
@@ -527,7 +672,6 @@ bd.approx <- function(S,
     max.iter <- 500
   }
 
-  p <- ncol(S)
   if (length(colnames(S)) == 0 | length(rownames(S)) == 0) {
     colnames(S) <- rownames(S) <- seq_len(p)
   }
@@ -536,63 +680,109 @@ bd.approx <- function(S,
     stop("Variable names are not unique.")
   }
 
-  p <- ncol(S)
-  if (p == 2) {
-    idx.cluster <- list(labels[1], labels[2])
-    cluster.distance <- calc.distance(S, idx.cluster, labels, linkage)
-
-    return(list(cluster1 = idx.cluster[1], cluster2 = idx.cluster[2], cluster.distance = cluster.distance, q.p = NA))
-  }
-
-  SVD <- eigen(S.h, symmetric = TRUE)
-
-  if (is.numeric(q)) {
-    if (q == 1){
-      q <- p - 1
-    } else {
-      q <- min(round(q * p), p - 1)
-    }
-  }
-  if (q == "Kaiser") {
-    q <- min(sum(SVD$values >= 1) + 2, p - 1)
-  }
-
-  SVD$vectors <- SVD$vectors[, 1:q]
   labels <- colnames(S)
 
-  dof.grid <- 1 : (p - 1)
+  min.grid <- 1L
   if (!missing(balance)) {
     if (balance < 0 | balance > 0.5) {
       stop(sprintf("%s is an invalid value for balance. Must be between 0 and 0.5.", balance))
     }
     min.grid <- max(floor(p * balance), 1)
-    dof.grid <- min.grid : (p - min.grid)
   }
 
-  distance <- -Inf
-  i <- 1
+  if (p == 2) {
+    cluster1 <- labels[1]
+    cluster2 <- labels[2]
+    idx.cluster <- list(cluster1, cluster2)
+    distance <- calc.distance(S, idx.cluster, labels, linkage)
 
-  for (dof in dof.grid) {
-    V <- calc_sparse_v_cpp(X = S.h, v = SVD$vectors, q = q, n = dof, maxit = max.iter)
+    if (linkage %in% c("ncut", "rcut")) {
+      distance <- -distance
+    }
 
-    for (i in seq_len(q)) {
-      v <- V[, i]
-      idx.cluster <- list(labels[v != 0], labels[v == 0])
-      distance.ht <- calc.distance(S, idx.cluster, labels, linkage)
+    B <- S
+    B[1, 2] <- 0
+    B[2, 1] <- 0
+
+    BD <- B
+    P <- diag(p)
+    rownames(P) <- colnames(P) <- labels
+
+    clustering <- c(1L, 2L)
+    names(clustering) <- labels
+
+    split <- list(B1 = cluster1, B2 = cluster2)
+    class(split) <- "split"
+
+    result <- list(BD = BD, B = B, P = P, clustering = clustering,
+                   split = split, distance = distance,
+                   search = "unique", n.candidates = 1)
+    class(result) <- "bdapprox"
+    return(result)
+  }
 
 
-      if (distance.ht > distance) {
-        distance <- distance.ht
-        cluster1 <- idx.cluster[[1]]
-        cluster2 <- idx.cluster[[2]]
+  if (search.used == "exhaustive") {
 
+    exact <- exhaustive.split(
+      S = S,
+      linkage = linkage,
+      labels = labels,
+      min.block.size = min.grid
+    )
+
+    cluster1 <- exact$cluster1
+    cluster2 <- exact$cluster2
+    distance <- exact$cluster.distance
+    n.candidates <- exact$n.candidates
+
+  } else {
+
+    SVD <- eigen(S.h, symmetric = TRUE)
+
+    if (is.numeric(q)) {
+      if (q == 1){
+        q <- p - 1
+      } else {
+        q <- max(1, min(round(q * p), p - 1))
       }
     }
+    if (q == "Kaiser") {
+      q <- min(sum(SVD$values >= 1) + 2, p - 1)
+    }
+
+    SVD$vectors <- SVD$vectors[, 1:q, drop = FALSE]
+
+    dof.grid <- min.grid : (p - min.grid)
+
+    distance <- -Inf
+    i <- 1
+
+    for (dof in dof.grid) {
+      V <- calc_sparse_v_cpp(X = S.h, v = SVD$vectors, q = q, m = dof, maxit = max.iter)
+
+      for (i in seq_len(q)) {
+        v <- V[, i]
+        idx.cluster <- list(labels[v != 0], labels[v == 0])
+        distance.ht <- calc.distance(S, idx.cluster, labels, linkage)
+
+
+        if (distance.ht > distance) {
+          distance <- distance.ht
+          cluster1 <- idx.cluster[[1]]
+          cluster2 <- idx.cluster[[2]]
+
+        }
+      }
+    }
+
+    if (linkage %in% c("ncut", "rcut")) {
+      distance <- -distance
+    }
+
+    n.candidates <- length(dof.grid) * q
   }
 
-  if (linkage %in% c("ncut", "rcut")) {
-    distance <- -distance
-  }
 
   B1 <- labels %in% cluster1
   B2 <- labels %in% cluster2
@@ -613,11 +803,14 @@ bd.approx <- function(S,
 
   clustering <- rep(1L, p)
   clustering[B2] <- 2L
+  names(clustering) <- labels
 
   split <- list(B1 = cluster1, B2 = cluster2)
   class(split) <- "split"
 
-  result <- list(BD = BD, B = B, P = P, clustering = clustering, split = split, distance = distance)
+  result <- list(BD = BD, B = B, P = P, clustering = clustering,
+                 split = split, distance = distance,
+                 search = search.used, n.candidates = n.candidates)
   class(result) <- "bdapprox"
   return(result)
 }
@@ -637,7 +830,7 @@ bd.approx <- function(S,
 #'
 #' @seealso \code{\link{hcsvd}}
 #'
-#' @references \cite{Bauer, J.O. (202Xa). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
+#' @references \cite{Bauer, J.O. (202X). Divisive hierarchical clustering using block diagonal matrix approximations. Working paper.}
 #'
 #' @examples
 #' \donttest{
@@ -665,6 +858,10 @@ is.ultrametric <- function(hcsvd.obj
   dist.mat <- as.matrix(hcsvd.obj$dist.matrix)
   n <- nrow(dist.mat)
 
+  if (n <= 2) {
+    return(TRUE)
+  }
+
   for (i in 1:(n-2)) {
     for (j in (i+1):(n-1)) {
       for (k in (j+1):n) {
@@ -687,169 +884,6 @@ is.ultrametric <- function(hcsvd.obj
 
   return(TRUE)
 }
-
-
-
-
-
-
-
-
-
-#' @export
-kmeans.svd <- function(S,
-                       D,
-                      linkage = "average",
-                      q = 1,
-                      h.power = 2,
-                      balance,
-                      max.iter
-) {
-
-  if (!is.sim.matrix(S)) {
-    stop("S must be a similarity matrix.")
-  }
-
-  if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
-    stop(sprintf("%s is an invalid argument for q.", q))
-  }
-
-  if(h.power <= 0){
-    stop("h.power must be positive.")
-  }
-  S.h <- S^h.power
-
-  if(!(is.numeric(h.power) && h.power == floor(h.power))){
-    warning("h.power should be an integer.")
-  }
-
-  LINKAGE <- c("average", "ncut", "rcut", "RV", "single")
-  if (!(linkage %in% LINKAGE)) {
-    stop(sprintf("%s is an invalid linkage function.", linkage))
-  }
-
-  if (missing(max.iter)) {
-    max.iter <- 500
-  }
-
-  p <- ncol(S)
-  if (length(colnames(S)) == 0 | length(rownames(S)) == 0) {
-    colnames(S) <- rownames(S) <- seq_len(p)
-  }
-
-  if (length(unique(colnames(S))) != p) {
-    stop("Variable names are not unique.")
-  }
-
-  p <- ncol(S)
-  #if (p == 2) {
-  #  idx.cluster <- list(labels[1], labels[2])
-  #  cluster.distance <- calc.distance(S, idx.cluster, labels, linkage)
-  #
-  #  return(list(cluster1 = idx.cluster[1], cluster2 = idx.cluster[2], cluster.distance = cluster.distance, q.p = NA))
-  #}
-
-  SVD <- eigen(S.h, symmetric = TRUE)
-
-  if (is.numeric(q)) {
-    if (q == 1){
-      q <- p - 1
-    } else {
-      q <- min(round(q * p), p - 1)
-    }
-  }
-  if (q == "Kaiser") {
-    q <- min(sum(SVD$values >= 1) + 2, p - 1)
-  }
-
-  SVD$vectors <- SVD$vectors[, 1:q]
-  labels <- colnames(S)
-
-  dof.grid <- 1 : (p - 1)
-  if (!missing(balance)) {
-    if (balance < 0 | balance > 0.5) {
-      stop(sprintf("%s is an invalid value for balance. Must be between 0 and 0.5.", balance))
-    }
-    min.grid <- max(floor(p * balance), 1)
-    dof.grid <- min.grid : (p - min.grid)
-  }
-
-  distance <- -Inf
-  i <- 1
-
-  for (dof in dof.grid) {
-    V <- calc_sparse_v_cpp(X = S.h, v = SVD$vectors, q = q, n = dof, maxit = max.iter)
-
-    for (i in seq_len(q)) {
-      v <- V[, i]
-      idx.cluster <- list(labels[v != 0], labels[v == 0])
-      #distance.ht <- calc.distance(S, idx.cluster, labels, linkage)
-
-
-      n.c1 <- length(idx.cluster[[1]])
-      n.c2 <- length(idx.cluster[[2]])
-      distance.ht <- 1/(2*p) * sum(D) -
-        sum(D[idx.cluster[[1]], idx.cluster[[1]] ]^2) / (2*n.c1) -
-        sum(D[idx.cluster[[2]], idx.cluster[[2]] ]^2) / (2*n.c2)
-
-
-
-      if (distance.ht > distance) {
-        distance <- distance.ht
-        cluster1 <- idx.cluster[[1]]
-        cluster2 <- idx.cluster[[2]]
-
-      }
-    }
-  }
-
-  if (linkage %in% c("ncut", "rcut")) {
-    distance <- -distance
-  }
-
-  B1 <- labels %in% cluster1
-  B2 <- labels %in% cluster2
-
-  B <- S
-  B[B1, B2]  <- 0
-  B[B2, B1]  <- 0
-
-  BD <- matrix(0, p, p)
-  colnames(BD) <- rownames(BD) <- colnames(B)
-  sum.B1 <- sum(B1)
-  sum.B2 <- sum(B2)
-  BD[seq_len(sum.B1), seq_len(sum.B1)] <- B[B1, B1]
-  BD[sum.B1 + seq_len(sum.B2), sum.B1 + seq_len(sum.B2)] <- B[B2, B2]
-
-  order.idx <- c(which(B1), which(B2))
-  P <- diag(p)[order.idx, ]
-
-  clustering <- rep(1L, p)
-  clustering[B2] <- 2L
-
-
-
-  ############
-  n.c1 <- length(cluster1)
-  n.c2 <- length(cluster2)
-  d1 <- sum(D[cluster1, cluster1 ]^2) / (2*n.c1)
-  d2 <- sum(D[cluster2, cluster2 ]^2) / (2*n.c2)
-  print(paste0("d1 = ", d1))
-  print(paste0("d2 = ", d2 ))
-  distance <-  d1 + d2
-  #############
-
-
-  split <- list(B1 = cluster1, B2 = cluster2)
-  class(split) <- "split"
-
-  result <- list(BD = BD, B = B, P = P, clustering = clustering, split = split, distance = distance)
-  class(result) <- "bdapprox"
-  return(result)
-}
-
-
-
 
 
 
