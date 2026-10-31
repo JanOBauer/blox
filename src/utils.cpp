@@ -103,16 +103,27 @@ Rcpp::List hcsvd_ht_cpp(const arma::mat& S,
                         int q,
                         std::string linkage,
                         int maxit = 500,
-                        double tol = 0.001) {
+                        double tol = 0.001,
+                        int min_block_size = 1) {
 
   int p = S.n_cols;
+
+  if (min_block_size < 1 || min_block_size > p / 2) {
+    Rcpp::stop("min_block_size must be between 1 and floor(p / 2).");
+  }
 
   arma::mat S_abs;
   arma::mat S_sq;
   arma::vec S_sq_row_sum;
 
-  if (linkage == "average" || linkage == "single") {
+  if (linkage == "average" || linkage == "single" ||
+      linkage == "ncut" || linkage == "rcut") {
     S_abs = arma::abs(S);
+  }
+
+  arma::vec degree;
+  if (linkage == "ncut") {
+    degree = arma::sum(S_abs, 1);
   }
 
   if (linkage == "RV") {
@@ -121,9 +132,10 @@ Rcpp::List hcsvd_ht_cpp(const arma::mat& S,
   }
 
   double distance = -std::numeric_limits<double>::infinity();
+  double n_candidates = 0.0;
   arma::ivec cluster(p, arma::fill::value(2));
 
-  for (int dof = 1; dof <= p - 1; ++dof) {
+  for (int dof = min_block_size; dof <= p - min_block_size; ++dof) {
 
     arma::mat V_sparse = calc_sparse_v_cpp(
       S_h,
@@ -141,9 +153,15 @@ Rcpp::List hcsvd_ht_cpp(const arma::mat& S,
       arma::uvec idx_cluster1 = arma::find(v != 0);
       arma::uvec idx_cluster2 = arma::find(v == 0);
 
+      if (idx_cluster1.n_elem < static_cast<arma::uword>(min_block_size) ||
+          idx_cluster2.n_elem < static_cast<arma::uword>(min_block_size)) {
+        continue;
+      }
+
+      ++n_candidates;
       double distance_ht = NA_REAL;
 
-      if (linkage == "average") {
+      if (linkage == "average" || linkage == "ncut" || linkage == "rcut") {
 
         double cut = 0.0;
 
@@ -153,11 +171,30 @@ Rcpp::List hcsvd_ht_cpp(const arma::mat& S,
           }
         }
 
-        distance_ht = 1.0 - cut /
-          (
-              static_cast<double>(idx_cluster1.n_elem) *
-                static_cast<double>(idx_cluster2.n_elem)
-          );
+        if (linkage == "average") {
+          distance_ht = 1.0 - cut /
+            (
+                static_cast<double>(idx_cluster1.n_elem) *
+                  static_cast<double>(idx_cluster2.n_elem)
+            );
+
+        } else if (linkage == "ncut") {
+          double ass1 = 0.0;
+          double ass2 = 0.0;
+
+          for (arma::uword j = 0; j < idx_cluster1.n_elem; ++j) {
+            ass1 += degree[idx_cluster1[j]];
+          }
+          for (arma::uword j = 0; j < idx_cluster2.n_elem; ++j) {
+            ass2 += degree[idx_cluster2[j]];
+          }
+
+          distance_ht = -cut / ass1 - cut / ass2;
+
+        } else {
+          distance_ht = -cut / static_cast<double>(idx_cluster1.n_elem) -
+            cut / static_cast<double>(idx_cluster2.n_elem);
+        }
 
       } else if (linkage == "RV") {
 
@@ -218,9 +255,14 @@ Rcpp::List hcsvd_ht_cpp(const arma::mat& S,
   }
 
 
+  if (distance == -std::numeric_limits<double>::infinity()) {
+    Rcpp::stop("HC-SVD did not generate a split satisfying the minimum block size.");
+  }
+
   return Rcpp::List::create(
     Rcpp::Named("cluster") = cluster,
-    Rcpp::Named("distance") = distance
+    Rcpp::Named("distance") = distance,
+    Rcpp::Named("n.candidates") = n_candidates
   );
 }
 

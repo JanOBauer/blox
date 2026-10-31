@@ -1,7 +1,7 @@
 Package: blox
 Type: Package
 Title: Block Diagonal Matrix Approximation
-Version: 0.0.2
+Version: 0.0.3
 Authors@R: 
     person(given = "Jan O.", family = "Bauer", email = "j.bauer@vu.nl", role = c("aut", "cre"), comment = c(ORCID = "0000-0001-7123-4507"))
 Maintainer: Jan O. Bauer <j.bauer@vu.nl>

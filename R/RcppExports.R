@@ -9,8 +9,8 @@ calc_sparse_v_cpp <- function(X, v, q, m, maxit = 500L, tol = 0.001, robust = FA
     .Call(`_blox_calc_sparse_v_cpp`, X, v, q, m, maxit, tol, robust)
 }
 
-hcsvd_ht_cpp <- function(S, S_h, V, q, linkage, maxit = 500L, tol = 0.001) {
-    .Call(`_blox_hcsvd_ht_cpp`, S, S_h, V, q, linkage, maxit, tol)
+hcsvd_ht_cpp <- function(S, S_h, V, q, linkage, maxit = 500L, tol = 0.001, min_block_size = 1L) {
+    .Call(`_blox_hcsvd_ht_cpp`, S, S_h, V, q, linkage, maxit, tol, min_block_size)
 }
 
 exhaustive_bd_cpp <- function(S, linkage, min_block_size = 1L) {

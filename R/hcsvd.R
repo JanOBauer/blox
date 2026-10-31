@@ -84,7 +84,8 @@ hcsvd.ht <- function(S,
                      labels,
                      max.iter,
                      search,
-                     exhaustive.max.p
+                     exhaustive.max.p,
+                     min.block.size = 1L
 ) {
 
   p <- ncol(S)
@@ -92,7 +93,7 @@ hcsvd.ht <- function(S,
     idx.cluster <- list(labels[1], labels[2])
     cluster.distance <- calc.distance(S, idx.cluster, labels, linkage)
 
-    return(list(cluster1 = idx.cluster[1], cluster2 = idx.cluster[2],
+    return(list(cluster1 = idx.cluster[[1]], cluster2 = idx.cluster[[2]],
                 cluster.distance = cluster.distance, q.p = NA,
                 search = "unique", n.candidates = 1))
   }
@@ -113,7 +114,7 @@ hcsvd.ht <- function(S,
       S = S,
       linkage = linkage,
       labels = labels,
-      min.block.size = 1L
+      min.block.size = min.block.size
     )
 
     return(list(cluster1 = exact$cluster1, cluster2 = exact$cluster2,
@@ -143,16 +144,20 @@ hcsvd.ht <- function(S,
     V = SVD$vectors,
     q = q,
     linkage = linkage,
-    maxit = max.iter
+    maxit = max.iter,
+    min_block_size = as.integer(min.block.size)
   )
 
   cluster1 <- labels[hcsvd.ht.cpp$cluster == 1]
   cluster2 <- labels[hcsvd.ht.cpp$cluster == 2]
   cluster.distance <- hcsvd.ht.cpp$distance
+  if (linkage %in% c("ncut", "rcut")) {
+    cluster.distance <- -cluster.distance
+  }
 
   return(list(cluster1 = cluster1, cluster2 = cluster2,
               cluster.distance = cluster.distance, q.p = q / p,
-              search = "hcsvd", n.candidates = q * (p - 1)))
+              search = "hcsvd", n.candidates = hcsvd.ht.cpp$n.candidates))
 }
 
 
@@ -484,6 +489,155 @@ hcsvd <- function(S,
 
 
 
+#' @title Compute One HC-SVD Split.
+#'
+#' @description Finds a two-way split of a similarity matrix without constructing
+#' the block diagonal approximation and permutation matrix. The computation uses
+#' the same C++ routine as \code{hcsvd()} and \code{bd.approx()}.
+#'
+#' @inheritParams bd.approx
+#'
+#' @return An object of class \code{hcsvdsplit}, containing \code{cluster1},
+#' \code{cluster2}, \code{distance}, and \code{search}.
+#'
+#' @export
+hcsvd.split <- function(S,
+                        linkage = "average",
+                        q = 1,
+                        h.power = 2,
+                        balance = NULL,
+                        max.iter = 500,
+                        search = "hcsvd",
+                        exhaustive.max.p = 20
+) {
+
+  result <- .hcsvd.split(S, linkage, q, h.power, balance,
+                         max.iter, search, exhaustive.max.p)
+  result$n.candidates <- NULL
+  class(result) <- "hcsvdsplit"
+  return(result)
+}
+
+
+.hcsvd.split <- function(S,
+                         linkage = "average",
+                         q = 1,
+                         h.power = 2,
+                         balance = NULL,
+                         max.iter = 500,
+                         search = "hcsvd",
+                         exhaustive.max.p = 20
+) {
+
+  if (!is.sim.matrix(S)) {
+    stop("S must be a similarity matrix.")
+  }
+
+  SEARCH <- c("hcsvd", "exhaustive", "auto")
+  if (!(search %in% SEARCH)) {
+    stop(sprintf("%s is an invalid search parameter", search))
+  }
+
+  if (!is.numeric(exhaustive.max.p) || length(exhaustive.max.p) != 1L ||
+      !is.finite(exhaustive.max.p) || exhaustive.max.p < 2 ||
+      exhaustive.max.p > 30 || exhaustive.max.p != floor(exhaustive.max.p)) {
+    stop("exhaustive.max.p must be an integer between 2 and 30.")
+  }
+
+  p <- ncol(S)
+  search.used <- search
+  if (search == "auto") {
+    if (p <= exhaustive.max.p) {
+      search.used <- "exhaustive"
+    } else {
+      search.used <- "hcsvd"
+    }
+  }
+
+  if (search.used == "exhaustive" && p > 30) {
+    stop("Exhaustive search is available only for p <= 30.")
+  }
+
+  if (search.used == "hcsvd") {
+    if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
+      stop(sprintf("%s is an invalid argument for q.", q))
+    }
+
+    if (length(h.power) != 1L || !is.numeric(h.power) || is.na(h.power) || !is.finite(h.power) ||
+        h.power < 1 || h.power != floor(h.power)) {
+      stop("h.power should be a positive integer.")
+    }
+  }
+
+  if (search.used == "hcsvd") {
+    S.h <- S^h.power
+  } else {
+    S.h <- S
+  }
+
+  LINKAGE <- c("average", "ncut", "rcut", "RV", "single")
+  if (!(linkage %in% LINKAGE)) {
+    stop(sprintf("%s is an invalid linkage function.", linkage))
+  }
+
+  if (length(colnames(S)) == 0 | length(rownames(S)) == 0) {
+    colnames(S) <- rownames(S) <- seq_len(p)
+  }
+
+  if (length(unique(colnames(S))) != p) {
+    stop("Variable names are not unique.")
+  }
+
+  labels <- colnames(S)
+
+  min.grid <- 1L
+  if (!is.null(balance)) {
+    if (balance < 0 | balance > 0.5) {
+      stop(sprintf("%s is an invalid value for balance. Must be between 0 and 0.5.", balance))
+    }
+    min.grid <- max(floor(p * balance), 1)
+  }
+
+  if (p == 2) {
+    idx.cluster <- list(labels[1], labels[2])
+    distance <- calc.distance(S, idx.cluster, labels, linkage)
+
+    if (linkage %in% c("ncut", "rcut")) {
+      distance <- -distance
+    }
+
+    return(list(cluster1 = labels[1], cluster2 = labels[2],
+                distance = distance, search = "unique", n.candidates = 1))
+  }
+
+  if (search.used == "exhaustive") {
+    result <- exhaustive.split(
+      S = S,
+      linkage = linkage,
+      labels = labels,
+      min.block.size = min.grid
+    )
+  } else {
+    result <- hcsvd.ht(
+      S = S,
+      S.h = S.h,
+      q = q,
+      linkage = linkage,
+      labels = labels,
+      max.iter = max.iter,
+      search = "hcsvd",
+      exhaustive.max.p = exhaustive.max.p,
+      min.block.size = min.grid
+    )
+  }
+
+  return(list(cluster1 = result$cluster1, cluster2 = result$cluster2,
+              distance = result$cluster.distance, search = search.used,
+              n.candidates = result$n.candidates))
+}
+
+
+
 #' @title Two Block Diagonal Matrix Approximation.
 #'
 #' @description Finds the best two block diagonal matrix approximation of a similarity matrix according to some distance (linkage) function as described in Bauer (202X).
@@ -616,173 +770,28 @@ bd.approx <- function(S,
                       exhaustive.max.p = 20
 ) {
 
-  if (!is.sim.matrix(S)) {
-    stop("S must be a similarity matrix.")
-  }
-
-  SEARCH <- c("hcsvd", "exhaustive", "auto")
-  if (!(search %in% SEARCH)) {
-    stop(sprintf("%s is an invalid search parameter", search))
-  }
-
-  if (!is.numeric(exhaustive.max.p) || length(exhaustive.max.p) != 1L ||
-      !is.finite(exhaustive.max.p) || exhaustive.max.p < 2 ||
-      exhaustive.max.p > 30 || exhaustive.max.p != floor(exhaustive.max.p)) {
-    stop("exhaustive.max.p must be an integer between 2 and 30.")
-  }
+  result.split <- .hcsvd.split(
+    S = S,
+    linkage = linkage,
+    q = q,
+    h.power = h.power,
+    balance = if (missing(balance)) NULL else balance,
+    max.iter = if (missing(max.iter)) 500 else max.iter,
+    search = search,
+    exhaustive.max.p = exhaustive.max.p
+  )
 
   p <- ncol(S)
-  search.used <- search
-  if (search == "auto") {
-    if (p <= exhaustive.max.p) {
-      search.used <- "exhaustive"
-    } else {
-      search.used <- "hcsvd"
-    }
-  }
-
-  if (search.used == "exhaustive" && p > 30) {
-    stop("Exhaustive search is available only for p <= 30.")
-  }
-
-  if (search.used == "hcsvd") {
-    if (!((q == "Kaiser") | (is.numeric(q) & (q > 0) & (q <= 1)))) {
-      stop(sprintf("%s is an invalid argument for q.", q))
-    }
-
-    if (length(h.power) != 1L || !is.numeric(h.power) || is.na(h.power) || !is.finite(h.power) ||
-        h.power < 1 || h.power != floor(h.power)) {
-      stop("h.power should be a positive integer.")
-    }
-  }
-
-  if (search.used == "hcsvd") {
-    S.h <- S^h.power
-  } else {
-    S.h <- S
-  }
-
-
-  LINKAGE <- c("average", "ncut", "rcut", "RV", "single")
-  if (!(linkage %in% LINKAGE)) {
-    stop(sprintf("%s is an invalid linkage function.", linkage))
-  }
-
-  if (missing(max.iter)) {
-    max.iter <- 500
-  }
-
   if (length(colnames(S)) == 0 | length(rownames(S)) == 0) {
     colnames(S) <- rownames(S) <- seq_len(p)
   }
 
-  if (length(unique(colnames(S))) != p) {
-    stop("Variable names are not unique.")
-  }
-
   labels <- colnames(S)
-
-  min.grid <- 1L
-  if (!missing(balance)) {
-    if (balance < 0 | balance > 0.5) {
-      stop(sprintf("%s is an invalid value for balance. Must be between 0 and 0.5.", balance))
-    }
-    min.grid <- max(floor(p * balance), 1)
-  }
-
-  if (p == 2) {
-    cluster1 <- labels[1]
-    cluster2 <- labels[2]
-    idx.cluster <- list(cluster1, cluster2)
-    distance <- calc.distance(S, idx.cluster, labels, linkage)
-
-    if (linkage %in% c("ncut", "rcut")) {
-      distance <- -distance
-    }
-
-    B <- S
-    B[1, 2] <- 0
-    B[2, 1] <- 0
-
-    BD <- B
-    P <- diag(p)
-    rownames(P) <- colnames(P) <- labels
-
-    clustering <- c(1L, 2L)
-    names(clustering) <- labels
-
-    split <- list(B1 = cluster1, B2 = cluster2)
-    class(split) <- "split"
-
-    result <- list(BD = BD, B = B, P = P, clustering = clustering,
-                   split = split, distance = distance,
-                   search = "unique", n.candidates = 1)
-    class(result) <- "bdapprox"
-    return(result)
-  }
-
-
-  if (search.used == "exhaustive") {
-
-    exact <- exhaustive.split(
-      S = S,
-      linkage = linkage,
-      labels = labels,
-      min.block.size = min.grid
-    )
-
-    cluster1 <- exact$cluster1
-    cluster2 <- exact$cluster2
-    distance <- exact$cluster.distance
-    n.candidates <- exact$n.candidates
-
-  } else {
-
-    SVD <- eigen(S.h, symmetric = TRUE)
-
-    if (is.numeric(q)) {
-      if (q == 1){
-        q <- p - 1
-      } else {
-        q <- max(1, min(round(q * p), p - 1))
-      }
-    }
-    if (q == "Kaiser") {
-      q <- min(sum(SVD$values >= 1) + 2, p - 1)
-    }
-
-    SVD$vectors <- SVD$vectors[, 1:q, drop = FALSE]
-
-    dof.grid <- min.grid : (p - min.grid)
-
-    distance <- -Inf
-    i <- 1
-
-    for (dof in dof.grid) {
-      V <- calc_sparse_v_cpp(X = S.h, v = SVD$vectors, q = q, m = dof, maxit = max.iter)
-
-      for (i in seq_len(q)) {
-        v <- V[, i]
-        idx.cluster <- list(labels[v != 0], labels[v == 0])
-        distance.ht <- calc.distance(S, idx.cluster, labels, linkage)
-
-
-        if (distance.ht > distance) {
-          distance <- distance.ht
-          cluster1 <- idx.cluster[[1]]
-          cluster2 <- idx.cluster[[2]]
-
-        }
-      }
-    }
-
-    if (linkage %in% c("ncut", "rcut")) {
-      distance <- -distance
-    }
-
-    n.candidates <- length(dof.grid) * q
-  }
-
+  cluster1 <- result.split$cluster1
+  cluster2 <- result.split$cluster2
+  distance <- result.split$distance
+  search.used <- result.split$search
+  n.candidates <- result.split$n.candidates
 
   B1 <- labels %in% cluster1
   B2 <- labels %in% cluster2
@@ -800,6 +809,9 @@ bd.approx <- function(S,
 
   order.idx <- c(which(B1), which(B2))
   P <- diag(p)[order.idx, ]
+  if (p == 2) {
+    rownames(P) <- colnames(P) <- labels
+  }
 
   clustering <- rep(1L, p)
   clustering[B2] <- 2L
@@ -910,11 +922,30 @@ print.hcsvd <- function(x, ...) {
 print.bdapprox <- function(x, ...) {
   cat("bd.approx result\n")
   cat("Cluster/Block sizes:", table(x$clustering), "\n")
-  cat("Clustering:\n")
-  cat(x$clustering, "\n")
+  if (length(x$clustering) > 10) {
+    cat("Clustering (first 10 items):\n")
+  } else {
+    cat("Clustering:\n")
+  }
+  print(utils::head(x$clustering, 10))
+  if (length(x$clustering) > 10) {
+    cat("...", length(x$clustering) - 10, "more items (see $clustering)\n")
+  }
   cat("Distance:", x$distance, "\n\n")
   cat("Available components:\n")
   cat(paste0("$", names(x), collapse = "\n"), "\n")
   invisible(x)
 }
 
+
+
+#' @exportS3Method
+print.hcsvdsplit <- function(x, ...) {
+  cat("hcsvd.split result\n")
+  cat("Cluster/Block sizes:", length(x$cluster1), length(x$cluster2), "\n")
+  cat("Distance:", x$distance, "\n")
+  cat("Search:", x$search, "\n\n")
+  cat("Available components:\n")
+  cat(paste0("$", names(x), collapse = "\n"), "\n")
+  invisible(x)
+}

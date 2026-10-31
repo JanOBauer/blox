@@ -43,8 +43,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // hcsvd_ht_cpp
-Rcpp::List hcsvd_ht_cpp(const arma::mat& S, const arma::mat& S_h, arma::mat V, int q, std::string linkage, int maxit, double tol);
-RcppExport SEXP _blox_hcsvd_ht_cpp(SEXP SSEXP, SEXP S_hSEXP, SEXP VSEXP, SEXP qSEXP, SEXP linkageSEXP, SEXP maxitSEXP, SEXP tolSEXP) {
+Rcpp::List hcsvd_ht_cpp(const arma::mat& S, const arma::mat& S_h, arma::mat V, int q, std::string linkage, int maxit, double tol, int min_block_size);
+RcppExport SEXP _blox_hcsvd_ht_cpp(SEXP SSEXP, SEXP S_hSEXP, SEXP VSEXP, SEXP qSEXP, SEXP linkageSEXP, SEXP maxitSEXP, SEXP tolSEXP, SEXP min_block_sizeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -55,7 +55,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::string >::type linkage(linkageSEXP);
     Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    rcpp_result_gen = Rcpp::wrap(hcsvd_ht_cpp(S, S_h, V, q, linkage, maxit, tol));
+    Rcpp::traits::input_parameter< int >::type min_block_size(min_block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(hcsvd_ht_cpp(S, S_h, V, q, linkage, maxit, tol, min_block_size));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -76,7 +77,7 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_blox_soft_cpp", (DL_FUNC) &_blox_soft_cpp, 4},
     {"_blox_calc_sparse_v_cpp", (DL_FUNC) &_blox_calc_sparse_v_cpp, 7},
-    {"_blox_hcsvd_ht_cpp", (DL_FUNC) &_blox_hcsvd_ht_cpp, 7},
+    {"_blox_hcsvd_ht_cpp", (DL_FUNC) &_blox_hcsvd_ht_cpp, 8},
     {"_blox_exhaustive_bd_cpp", (DL_FUNC) &_blox_exhaustive_bd_cpp, 3},
     {NULL, NULL, 0}
 };
