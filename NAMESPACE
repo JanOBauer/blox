@@ -13,7 +13,9 @@ export(is.ultrametric)
 import(Rcpp)
 import(RcppArmadillo)
 importFrom(matrixStats,mean2)
-importFrom(stats,as.dist)
-importFrom(stats,cov)
-importFrom(stats,cutree)
+importFrom(stats,
+  as.dist,
+  cov,
+  cutree
+)
 useDynLib(blox, .registration = TRUE)

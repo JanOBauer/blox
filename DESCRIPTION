@@ -9,8 +9,7 @@ Description: Finds the best block diagonal matrix approximation of a symmetric m
 License: GPL (>= 2)
 Imports: matrixStats, Rcpp, RcppArmadillo
 Encoding: UTF-8
-RoxygenNote: 7.3.2
 Suggests: bdsvd, corrplot, irlba, knitr, psych, testthat (>= 3.0.0)
 LinkingTo: Rcpp, RcppArmadillo
 NeedsCompilation: yes
-
+Config/roxygen2/version: 8.1.1
